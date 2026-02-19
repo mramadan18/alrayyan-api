@@ -15,8 +15,8 @@
   "dependencies": {
     "adhan": "^4.4.3",
     "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
     "express": "^5.2.1",
-    "geoip-lite": "^1.4.10",
     "moment-timezone": "^0.6.0"
   },
   "devDependencies": {

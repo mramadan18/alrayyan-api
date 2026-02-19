@@ -2,14 +2,13 @@ const GEO_API_KEY = process.env.GEO_API_KEY;
 const GEO_API_URL = "https://api.ipgeolocation.io/ipgeo";
 
 /**
- * Fetches user location data based on IP address
+ * Fetches city, country, and timezone from ipgeolocation based on IP address.
+ * Coordinates are intentionally excluded — resolved separately via Nominatim.
  * @param {string} ipAddress - User's IP address
- * @returns {Promise<Object|null>} Location data or null on failure
+ * @returns {Promise<{city: string, country_name: string, time_zone: {name: string}}|null>}
  */
 async function getUserLocation(ipAddress) {
-  const url = `${GEO_API_URL}?apiKey=${GEO_API_KEY}&ip=${ipAddress}&fields=country_name,city,latitude,longitude,time_zone`;
-
-  console.log(url);
+  const url = `${GEO_API_URL}?apiKey=${GEO_API_KEY}&ip=${ipAddress}&fields=country_name,city,time_zone`;
 
   try {
     const response = await fetch(url);

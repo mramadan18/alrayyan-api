@@ -1,17 +1,16 @@
 const adhan = require("adhan");
 const moment = require("moment-timezone");
 const { getUserLocation } = require("../services/geoService");
+const { getCoordinates } = require("../services/nominatimService");
+const {
+  getCachedByIp,
+  getCachedByCity,
+  cacheLocation,
+} = require("../services/locationCacheService");
 const calculationMethods = require("../config/calculationMethods");
 
-// Fallback IP address for local testing
 const FALLBACK_IP = process.env.DEV_FALLBACK_IP;
 
-/**
- * Parses method and madhab from query parameters and returns adhan params
- * @param {string} method - Calculation method (e.g., EGYPT, MWL)
- * @param {string} madhab  - Jurisprudential school (HANAFI or SHAFI)
- * @returns {adhan.CalculationParameters}
- */
 function buildCalculationParams(method = "EGYPT", madhab = "SHAFI") {
   const params =
     calculationMethods[method.toUpperCase()] ||
@@ -25,15 +24,8 @@ function buildCalculationParams(method = "EGYPT", madhab = "SHAFI") {
   return params;
 }
 
-/**
- * Format PrayerTimes object into formatted timings with timezone
- * @param {adhan.PrayerTimes} prayerTimes
- * @param {string} timeZone
- * @returns {Object}
- */
 function formatPrayerTimings(prayerTimes, timeZone) {
-  const fmt = (time) => moment(time).tz(timeZone).format("HH:mm");
-
+  const fmt = (t) => moment(t).tz(timeZone).format("HH:mm");
   return {
     Fajr: fmt(prayerTimes.fajr),
     Sunrise: fmt(prayerTimes.sunrise),
@@ -44,68 +36,78 @@ function formatPrayerTimings(prayerTimes, timeZone) {
   };
 }
 
-/**
- * GET /prayer-times
- * Accepts (optional): lat, lon, timezone, method, madhab
- * If coordinates are not provided, it fetches them via GeoIP
- */
+async function resolveLocation(req) {
+  const { lat, lon, timezone, city, country } = req.query;
+
+  // Option 1: explicit coordinates
+  if (lat && lon) {
+    return {
+      latitude: parseFloat(lat),
+      longitude: parseFloat(lon),
+      timeZone: timezone || "UTC",
+      city: city || "Unknown",
+      country_name: country || "Unknown",
+    };
+  }
+
+  // Option 2: resolve from IP with cache
+  let ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+  if (ip === "::1" || ip === "127.0.0.1") ip = FALLBACK_IP;
+
+  // 2a: cache hit by IP
+  const byIp = await getCachedByIp(ip);
+  if (byIp) return byIp;
+
+  // 2b: resolve city from IP via GeoIP API
+  const geoData = await getUserLocation(ip);
+  if (!geoData?.city) return null;
+
+  // 2c: cache hit by city
+  const byCity = await getCachedByCity(geoData.city);
+  if (byCity) {
+    await cacheLocation(ip, byCity); // link IP to existing city entry
+    return byCity;
+  }
+
+  // 2d: resolve coordinates from Nominatim
+  const coords = await getCoordinates(geoData.city, geoData.country_name);
+  if (!coords) return null;
+
+  const locationMeta = {
+    latitude: coords.latitude,
+    longitude: coords.longitude,
+    timeZone: geoData.time_zone?.name || "UTC",
+    city: geoData.city,
+    country_name: geoData.country_name,
+  };
+
+  await cacheLocation(ip, locationMeta);
+  return locationMeta;
+}
+
 async function getPrayerTimes(req, res) {
   try {
-    const { lat, lon, timezone, method, madhab } = req.query;
+    const { method, madhab } = req.query;
 
-    let locationMeta;
+    const locationMeta = await resolveLocation(req);
 
-    // --- Option 1: Explicit coordinates from user ---
-    if (lat && lon) {
-      const timeZone = timezone || "UTC";
-      locationMeta = {
-        latitude: parseFloat(lat),
-        longitude: parseFloat(lon),
-        timeZone,
-        city: req.query.city || "Unknown",
-        country_name: req.query.country || "Unknown",
-      };
-    } else {
-      // --- Option 2: Get location from GeoIP ---
-      let ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
-
-      console.log("ip", ip);
-      // Fallback for local testing
-      if (ip === "::1" || ip === "127.0.0.1") {
-        ip = FALLBACK_IP;
-      }
-
-      console.log("ip", ip);
-
-      const geoData = await getUserLocation(ip);
-
-      console.log("geoData", geoData);
-
-      if (!geoData || !geoData.latitude) {
-        return res.status(503).json({
-          error:
-            "Could not determine geological location. Please provide lat and lon manually.",
-        });
-      }
-
-      locationMeta = {
-        latitude: parseFloat(geoData.latitude),
-        longitude: parseFloat(geoData.longitude),
-        timeZone: geoData.time_zone?.name || "UTC",
-        city: geoData.city,
-        country_name: geoData.country_name,
-      };
+    if (!locationMeta) {
+      return res.status(503).json({
+        error:
+          "Could not determine location. Please provide lat and lon manually.",
+      });
     }
 
-    // --- Calculate Prayer Times ---
     const coordinates = new adhan.Coordinates(
       locationMeta.latitude,
       locationMeta.longitude,
     );
-
     const params = buildCalculationParams(method, madhab);
-    const date = new Date();
-    const prayerTimes = new adhan.PrayerTimes(coordinates, date, params);
+
+    const adjustments = ["fajr", "sunrise", "dhuhr", "asr", "maghrib", "isha"];
+    adjustments.forEach((prayer) => (params.adjustments[prayer] = -1));
+
+    const prayerTimes = new adhan.PrayerTimes(coordinates, new Date(), params);
 
     return res.json({
       metadata: {
@@ -120,7 +122,7 @@ async function getPrayerTimes(req, res) {
       timings: formatPrayerTimings(prayerTimes, locationMeta.timeZone),
     });
   } catch (error) {
-    console.error("Error calculating prayer times:", error.message);
+    console.error("[PrayerTimes]", error.message);
     return res.status(500).json({ error: "Internal Server Error." });
   }
 }

@@ -9,6 +9,8 @@ const GEO_API_URL = "https://api.ipgeolocation.io/ipgeo";
 async function getUserLocation(ipAddress) {
   const url = `${GEO_API_URL}?apiKey=${GEO_API_KEY}&ip=${ipAddress}&fields=country_name,city,latitude,longitude,time_zone`;
 
+  console.log(url);
+
   try {
     const response = await fetch(url);
 

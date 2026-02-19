@@ -4,7 +4,7 @@ const { getUserLocation } = require("../services/geoService");
 const calculationMethods = require("../config/calculationMethods");
 
 // Fallback IP address for local testing
-const FALLBACK_IP = process.env.DEV_FALLBACK_IP || "41.42.178.157";
+const FALLBACK_IP = process.env.DEV_FALLBACK_IP;
 
 /**
  * Parses method and madhab from query parameters and returns adhan params
@@ -69,12 +69,17 @@ async function getPrayerTimes(req, res) {
       // --- Option 2: Get location from GeoIP ---
       let ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
 
+      console.log("ip", ip);
       // Fallback for local testing
       if (ip === "::1" || ip === "127.0.0.1") {
         ip = FALLBACK_IP;
       }
 
+      console.log("ip", ip);
+
       const geoData = await getUserLocation(ip);
+
+      console.log("geoData", geoData);
 
       if (!geoData || !geoData.latitude) {
         return res.status(503).json({

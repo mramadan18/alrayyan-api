@@ -22,6 +22,7 @@ const calculationMethods = {
 router.get("/prayer-times", (req, res) => {
   // 1. Determine the IP (handles Localhost and Production)
   let ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+  console.log("ip", ip);
   if (ip === "::1" || ip === "127.0.0.1") {
     ip = "156.213.212.105"; // IP تجريبي لمصر أثناء التطوير
   }

@@ -8,9 +8,8 @@ const prayerTimesRouter = require("./routes/prayerTimes");
 const app = express();
 
 app.use(cors());
-app.use("/api/v1", prayerTimesRouter);
 
-// Ensure DB is connected before handling any request (safe for serverless)
+// Connect to DB before any route is handled
 app.use(async (req, res, next) => {
   try {
     await connectDB();
@@ -20,6 +19,8 @@ app.use(async (req, res, next) => {
     res.status(503).json({ error: "Database unavailable. Please try again." });
   }
 });
+
+app.use("/api/v1", prayerTimesRouter);
 
 // Export app for serverless platforms (Vercel, AWS Lambda, etc.)
 module.exports = app;

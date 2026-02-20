@@ -4,10 +4,15 @@ const express = require("express");
 const cors = require("cors");
 const { connectDB } = require("./services/dbService");
 const prayerTimesRouter = require("./routes/prayerTimes");
+const { renderDocs } = require("./controllers/docsController");
 
 const app = express();
 
 app.use(cors());
+
+// Documentation route
+app.get("/docs", renderDocs);
+app.get("/", (req, res) => res.redirect("/docs")); // Redirect root to docs
 
 // Connect to DB before any route is handled
 app.use(async (req, res, next) => {

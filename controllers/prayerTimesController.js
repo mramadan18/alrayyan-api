@@ -1,7 +1,13 @@
 const adhan = require("adhan");
 const moment = require("moment-timezone");
-const { getUserLocation } = require("../services/geoService");
-const { getCoordinates } = require("../services/nominatimService");
+const {
+  getUserLocation,
+  getTimezoneByCoords,
+} = require("../services/geoService");
+const {
+  getCoordinates,
+  reverseGeocode,
+} = require("../services/nominatimService");
 const {
   getCachedByIp,
   getCachedByCity,
@@ -37,52 +43,116 @@ function formatPrayerTimings(prayerTimes, timeZone) {
 }
 
 async function resolveLocation(req) {
-  const { lat, lon, timezone, city, country } = req.query;
-
-  // Option 1: explicit coordinates
-  if (lat && lon) {
-    return {
-      latitude: parseFloat(lat),
-      longitude: parseFloat(lon),
-      timeZone: timezone || "UTC",
-      city: city || "Unknown",
-      country_name: country || "Unknown",
-    };
-  }
-
-  // Option 2: resolve from IP with cache
+  const { lat, lon, city, country } = req.query;
   let ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
   if (ip === "::1" || ip === "127.0.0.1") ip = FALLBACK_IP;
 
-  // 2a: cache hit by IP
-  const byIp = await getCachedByIp(ip);
-  if (byIp) return byIp;
-
-  // 2b: resolve city from IP via GeoIP API
-  const geoData = await getUserLocation(ip);
-  if (!geoData?.city) return null;
-
-  // 2c: cache hit by city
-  const byCity = await getCachedByCity(geoData.city);
-  if (byCity) {
-    await cacheLocation(ip, byCity); // link IP to existing city entry
-    return byCity;
-  }
-
-  // 2d: resolve coordinates from Nominatim
-  const coords = await getCoordinates(geoData.city, geoData.country_name);
-  if (!coords) return null;
-
-  const locationMeta = {
-    latitude: coords.latitude,
-    longitude: coords.longitude,
-    timeZone: geoData.time_zone?.name || "UTC",
-    city: geoData.city,
-    country_name: geoData.country_name,
+  /**
+   * Enriches location metadata with a timezone if missing and caches it.
+   */
+  const enrichAndCache = async (baseMeta, clientIp) => {
+    if (!baseMeta.timeZone) {
+      baseMeta.timeZone =
+        (await getTimezoneByCoords(baseMeta.latitude, baseMeta.longitude)) ||
+        "UTC";
+    }
+    await cacheLocation(clientIp, baseMeta);
+    return baseMeta;
   };
 
-  await cacheLocation(ip, locationMeta);
-  return locationMeta;
+  // Pre-fetch IP cache to avoid redundant external calls if user sends same params
+  const byIp = ip ? await getCachedByIp(ip) : null;
+
+  // Case 1: Precise coordinates provided by user
+  if (lat && lon) {
+    const latitude = parseFloat(lat);
+    const longitude = parseFloat(lon);
+
+    // If we already have this IP cached and the coordinates are the same (or very close), use cache
+    if (
+      byIp &&
+      Math.abs(byIp.latitude - latitude) < 0.0001 &&
+      Math.abs(byIp.longitude - longitude) < 0.0001
+    ) {
+      return byIp;
+    }
+
+    const geoNames = await reverseGeocode(latitude, longitude);
+
+    if (geoNames) {
+      const cached = await getCachedByCity(geoNames.city);
+      if (cached) {
+        // Use exact user coordinates but cached metadata for other fields
+        const meta = { ...cached, latitude, longitude };
+        if (ip) await cacheLocation(ip, meta);
+        return meta;
+      }
+
+      return await enrichAndCache(
+        {
+          latitude,
+          longitude,
+          city: geoNames.city,
+          country_name: geoNames.country,
+        },
+        ip,
+      );
+    }
+  }
+
+  // Case 2: City name provided by user
+  if (city) {
+    // If IP cache matches the requested city, return it
+    if (byIp && byIp.city.toLowerCase() === city.trim().toLowerCase()) {
+      return byIp;
+    }
+
+    const cached = await getCachedByCity(city);
+    if (cached) {
+      if (ip) await cacheLocation(ip, cached);
+      return cached;
+    }
+
+    const coords = await getCoordinates(city, country || "");
+    if (coords) {
+      return await enrichAndCache(
+        {
+          ...coords,
+          city,
+          country_name: country || "Unknown",
+        },
+        ip,
+      );
+    }
+  }
+
+  // Case 3: Fallback to IP address
+  if (byIp) return byIp;
+
+  const geoData = await getUserLocation(ip);
+  if (geoData?.city) {
+    const cached = await getCachedByCity(geoData.city);
+    if (cached) {
+      await cacheLocation(ip, cached);
+      return cached;
+    }
+
+    const coords = await getCoordinates(geoData.city, geoData.country_name);
+    if (coords) {
+      return await enrichAndCache(
+        {
+          latitude: coords.latitude,
+          longitude: coords.longitude,
+          city: geoData.city,
+          country_name: geoData.country_name,
+          timeZone: geoData.time_zone?.name,
+        },
+        ip,
+      );
+    }
+  }
+
+  return null;
 }
 
 async function getPrayerTimes(req, res) {
@@ -104,8 +174,8 @@ async function getPrayerTimes(req, res) {
     );
     const params = buildCalculationParams(method, madhab);
 
-    const adjustments = ["fajr", "sunrise", "dhuhr", "asr", "maghrib", "isha"];
-    adjustments.forEach((prayer) => (params.adjustments[prayer] = -1));
+    // const adjustments = ["fajr", "sunrise", "dhuhr", "asr", "maghrib", "isha"];
+    // adjustments.forEach((prayer) => (params.adjustments[prayer] = -1));
 
     const prayerTimes = new adhan.PrayerTimes(coordinates, new Date(), params);
 

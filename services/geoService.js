@@ -27,4 +27,30 @@ async function getUserLocation(ipAddress) {
   }
 }
 
-module.exports = { getUserLocation };
+/**
+ * Fetches timezone information for a given latitude and longitude using ipgeolocation.io.
+ * @param {number} lat - Latitude
+ * @param {number} lon - Longitude
+ * @returns {Promise<string|null>} - Returns the IANA timezone name (e.g., "Africa/Cairo")
+ */
+async function getTimezoneByCoords(lat, lon) {
+  const url = `https://api.ipgeolocation.io/timezone?apiKey=${GEO_API_KEY}&lat=${lat}&long=${lon}`;
+
+  try {
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      throw new Error(
+        `Timezone API error: ${response.status} ${response.statusText}`,
+      );
+    }
+
+    const data = await response.json();
+    return data.timezone || null;
+  } catch (error) {
+    console.error("Failed to fetch timezone by coordinates:", error.message);
+    return null;
+  }
+}
+
+module.exports = { getUserLocation, getTimezoneByCoords };

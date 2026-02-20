@@ -1,5 +1,3 @@
-const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
-
 /**
  * Resolves precise coordinates (lat/lon) for a city+country using OpenStreetMap Nominatim.
  * More accurate than IP-based geolocation for prayer time calculations.
@@ -8,14 +6,11 @@ const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
  * @returns {Promise<{latitude: number, longitude: number}|null>}
  */
 async function getCoordinates(city, country) {
-  const url = `${NOMINATIM_URL}?city=${encodeURIComponent(city)}&country=${encodeURIComponent(country)}&format=json&limit=1`;
-
-  console.log("url => ", url);
+  const url = `https://nominatim.openstreetmap.org/search?state=${city.toLowerCase()}&country=${country.toLowerCase()}&format=json&limit=1`;
 
   try {
     const response = await fetch(url, {
       headers: {
-        // Nominatim requires a User-Agent header to identify the app
         "User-Agent": "AlRayyan-API/1.0 (prayer times service)",
       },
     });
@@ -42,4 +37,49 @@ async function getCoordinates(city, country) {
   }
 }
 
-module.exports = { getCoordinates };
+/**
+ * Resolves city and country name for a given latitude and longitude using OpenStreetMap Nominatim.
+ * @param {number} lat - Latitude
+ * @param {number} lon - Longitude
+ * @returns {Promise<{city: string, country: string}|null>}
+ */
+async function reverseGeocode(lat, lon) {
+  const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&accept-language=en`;
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent": "AlRayyan-API/1.0 (prayer times service)",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `Nominatim API error: ${response.status} ${response.statusText}`,
+      );
+    }
+
+    const data = await response.json();
+
+    if (!data || !data.address) {
+      throw new Error(`No location found for coordinates: ${lat}, ${lon}`);
+    }
+
+    // Nominatim returns city, town, village, or suburb depending on the location
+    const city =
+      data.address.city ||
+      data.address.town ||
+      data.address.village ||
+      data.address.suburb ||
+      data.address.state ||
+      "Unknown";
+    const country = data.address.country || "Unknown";
+
+    return { city, country };
+  } catch (error) {
+    console.error("Failed to reverse geocode from Nominatim:", error.message);
+    return null;
+  }
+}
+
+module.exports = { getCoordinates, reverseGeocode };

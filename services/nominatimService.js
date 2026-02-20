@@ -10,6 +10,8 @@ const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
 async function getCoordinates(city, country) {
   const url = `${NOMINATIM_URL}?city=${encodeURIComponent(city)}&country=${encodeURIComponent(country)}&format=json&limit=1`;
 
+  console.log("url => ", url);
+
   try {
     const response = await fetch(url, {
       headers: {
